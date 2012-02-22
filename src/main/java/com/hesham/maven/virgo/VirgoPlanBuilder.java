@@ -147,6 +147,11 @@ public class VirgoPlanBuilder {
 			
 			String filePath = planConfig.getBasePath() + planConfig.getOutputDirectoryName() + planConfig.getPlanFileName();
 			
+			// By default, this should be the target directory
+			File outputDir = new File(planConfig.getBasePath() + planConfig.getOutputDirectoryName());
+			if ( ! outputDir.exists())
+				outputDir.mkdir();
+			
 			FileWriter fileWriter = new FileWriter(new File(filePath));
 			marshaller.marshal(planElemWrapper, fileWriter);
 			fileWriter.close();
@@ -169,3 +174,4 @@ public class VirgoPlanBuilder {
 		this.logger = logger;
 	}
 }
+
