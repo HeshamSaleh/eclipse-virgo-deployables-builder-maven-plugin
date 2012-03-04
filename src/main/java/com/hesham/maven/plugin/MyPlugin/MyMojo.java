@@ -22,7 +22,6 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
 
 import com.hesham.maven.virgo.VirgoPlanBuilder;
-import com.hesham.maven.virgo.VirgoPlanConfig;
 import com.hesham.maven.virgo.jaxb.plan.Plan;
 
 import java.io.File;
@@ -38,10 +37,10 @@ import javax.xml.bind.annotation.XmlElement;
  * 
  * 
  * @goal virgo-plan
- * @aggregator true
+ * 
  */
 public class MyMojo extends AbstractMojo {
-
+//@aggregator true
 	/**
 	 * Location of the file.
 	 * 
@@ -49,23 +48,22 @@ public class MyMojo extends AbstractMojo {
 	 * @required
 	 */
 	private File outputDirectory;
-
+	
 	/**
-	 * Modules
+	 * Packaging
 	 * 
-	 * @parameter expression="${project.modules}"
+	 * @parameter expression="${project.packaging}"
 	 * @required
-	 * @readonly
 	 */
-	private ArrayList<String> modules;
+	private String packaging;
 
 	/**
-	 * Modules
+	 * Plan Configuration, supplied by the parent POM only
 	 * 
 	 * @parameter expression="${virgo-plan.plan}"
 	 * @required
 	 */
-	private Plan plan;
+	private Plan planEntity;
 	
 	
 	/**
@@ -79,44 +77,53 @@ public class MyMojo extends AbstractMojo {
 	/**
 	 * Project's base directory
 	 * 
-	 * @parameter expression="${project.artifactId}"
+	 * @parameter expression="${project.build.finalName}"
 	 * @required
 	 */
-	private String artifactName;
+	private String artifactFinalName;
+
 	
 	/**
-	 * Project's base directory
 	 * 
-	 * @parameter expression="${project.version}"
-	 * @required
+	 * This is set as static for later children sub modules appending to it 
+	 * 
 	 */
-	private String artifactVersion;
-	
+	private static File barePlanFile;
 
 	String errorStrMissingMandatoryFields = "One or more mandatory configuration wasn't set for the plan file. " +
 			"Check that you have specified plan.name, plan.version and that you have already sub-modules specified for this POM.";
 
 	public void execute() throws MojoExecutionException, MojoFailureException {
-		// Check the required attributes inside the plan xml
-		if (plan.getName() == null || plan.getVersion() == null
-				|| plan.getArtifact() == null || modules == null
-				|| modules.size() == 0)
-			throw new MojoFailureException(errorStrMissingMandatoryFields);
+		VirgoPlanBuilder.logger = getLog();
+		
+		// Get the packaging type of the artifact in hand, if it is POM then this means it is the parent POM, and in this case a bare plan file should be prepared and written
+		if (packaging.equalsIgnoreCase("pom")){
+			// Write bare plan file
+			
+			// Check the required attributes inside the plan xml configuration supplied in the pom
+			if (planEntity.getName() == null || planEntity.getVersion() == null
+					|| planEntity.getArtifact() == null)
+				throw new MojoFailureException(errorStrMissingMandatoryFields);
 
-		getLog().info("Generating the virgo-plan file... ");
-		String planFileName = artifactName + "-" + artifactVersion + ".plan";
-		
-		// Prepare configuration entity for the VirgoPlanBuilder
-		VirgoPlanConfig config; 
-		// Check if module names were specified inside the plan configuration it self
-		if (plan.getArtifact() != null && plan.getArtifact().size() > 0)
-			config = new VirgoPlanConfig(basedir.getAbsolutePath()+File.separator, planFileName, plan);
-		// Else get the modules from the parent (current) POM
-		config = new VirgoPlanConfig(basedir.getAbsolutePath()+File.separator, planFileName, plan, modules);
-		
-		VirgoPlanBuilder virgoPlanBuilder = new VirgoPlanBuilder(config, getLog());
-		boolean isSuccessful = virgoPlanBuilder.buildPlan();
-		if (isSuccessful == false)
-			throw new MojoFailureException("A problem occured during building/writing the plan file.");
+			String planFileName = artifactFinalName + ".plan";
+
+			// Prepare configuration entity for the VirgoPlanBuilder
+			// I am NOT ignoring any other configuration passed (like supplying some artifacts by hand in the parent pom file), it will be added to the plan and any other sub modules will be appended to the same file
+			
+			getLog().info("Generating a bare Eclipse Virgo plan file...");
+			boolean isSuccessful = VirgoPlanBuilder.buildBarePlanS(planEntity, planFileName, outputDirectory.getAbsolutePath());
+			if (isSuccessful == false)
+				throw new MojoFailureException("A problem occured during building/writing the bare plan file.");
+			
+			barePlanFile = new File(outputDirectory + File.separator + planFileName);
+			
+			getLog().info("Bare Eclipse Virgo plan file has been generated. Watch this file as sub module(s) definitions are appended to it.");
+		}
+		else
+		{
+			// Then this artifact is actually a submodule, and an entry for it should be added to the main plan file located at the parent/target directory
+			String artifactFullName = artifactFinalName + "." + packaging;
+			VirgoPlanBuilder.appendToPlan(artifactFullName, outputDirectory.getAbsolutePath(), barePlanFile);
+		}
 	}
 }

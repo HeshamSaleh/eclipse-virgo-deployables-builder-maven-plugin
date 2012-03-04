@@ -16,6 +16,7 @@ import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBElement;
 import javax.xml.bind.JAXBException;
 import javax.xml.bind.Marshaller;
+import javax.xml.bind.Unmarshaller;
 
 import org.apache.maven.plugin.logging.Log;
 
@@ -26,131 +27,82 @@ import com.hesham.maven.virgo.jaxb.plan.Plan;
 
 public class VirgoPlanBuilder {
 	
-	private VirgoPlanConfig planConfig;
+//	private VirgoPlanConfig planConfig;
 	
-	String SEP = File.separator;
+	static String SEP = File.separator;
 	
-	Log logger ;
+	public static Log logger ;
+	
+	public static boolean buildBarePlanS(Plan planEntity, String planFileFullName,  String outputDirectory){
+		return writeBarePlanFile(planEntity, planFileFullName, outputDirectory);
+	}
 	
 	/**
-	 * Creates the default configuration
+	 * @param artifactFullFinalName Full final name including the extension
+	 * @param artifactOutputDirectory
+	 * @param planFile
 	 */
-	public VirgoPlanBuilder(VirgoPlanConfig planConfig, Log logger){
+	public static boolean appendToPlan(String artifactFullFinalName, String artifactOutputDirectory, File planFile){
+		// Load this plan file and get the Plan XML object
+		Plan planEntity = readPlanFile(planFile);
 		
-		if (planConfig.getPlanFileName() == null)
-			throw new IllegalArgumentException("No plan file name was specified.");
+		// Add the artifact Entry to it
+		ArtifactType artifactTypeEntry = getArtifactInfo(artifactFullFinalName, artifactOutputDirectory);
+		planEntity.getArtifact().add(artifactTypeEntry);
+		logger.info("Prepared a plan entry for the artifact's file " + artifactFullFinalName);
 		
-		if (planConfig.getPlanEntity() == null)
-			throw new IllegalArgumentException("No plan entity was set.");
-		
-		this.planConfig = planConfig;
-		this.logger = logger;
-	}
-	
-	public boolean buildPlan(){
-		List<ArtifactType> planArtifacts = planConfig.getPlanEntity().getArtifact();
-		if (planArtifacts == null || planArtifacts.size() == 0)
-		{
-			// Try to get them from the plan configuration it self
-			if (planConfig.getModulesNames() != null){
-				List<ArtifactType> artifacts = prepareArtifactTypes(planConfig.getModulesNames());
-				planArtifacts.addAll(artifacts);
-			}
-		}
-		return writePlanFile();
+		// Rewrite the file again
+		return writePlanFile(planEntity, planFile);
 	}
 	
 	
-	private List<ArtifactType> prepareArtifactTypes(List<String> modules){
-		
-		if (modules == null)
-			return null;
-		
-		List<ArtifactType> artifacts = new ArrayList<ArtifactType>(modules.size());
-		
-		
-		for (String moduleName : modules)
-		{
+	public static ArtifactType getArtifactInfo(String artifactFullFinalName, String artifactOutputDirectory){
+		String artifactPath = artifactOutputDirectory + SEP + artifactFullFinalName; 
+		try {
+
 			ArtifactType artifact = new ArtifactType();
+
+			JarFile deployableJar = new JarFile(artifactPath);
 			
-			String moduleDirPath = planConfig.getBasePath() + moduleName + File.separator ;
-			String moduleTargetDirPath = moduleDirPath + "target" + File.separator ;  
-			try {
-				
-				// Get the module deployable (jar/war) name
-				String deployableName = getModuleDeployableName(moduleDirPath);
-				
-				JarFile deployableJar ;
-				try{
-					// Look at getModuleDeployableName's TODO
-					deployableJar = new JarFile(moduleTargetDirPath + deployableName + ".jar");
-				}catch (ZipException e) {
-					deployableJar = new JarFile(moduleTargetDirPath + deployableName + ".war");
-				}
-				
-				// Get its Manifest 
-				Manifest deployableJarManifest = deployableJar.getManifest();
-				String moduleSymbolicName = deployableJarManifest.getMainAttributes().getValue("Bundle-SymbolicName").trim();
-				String moduleVersion = deployableJarManifest.getMainAttributes().getValue("Bundle-Version").trim();
-				String moduleType = "bundle";
-				
-				// Set the Artifact with values gotten from the original Manifest 
-				artifact.setName(moduleSymbolicName);
-				artifact.setVersion(moduleVersion);
-				artifact.setType(moduleType); // TODO: Inspect if there are any other artifact types
-				
-				artifacts.add(artifact);
-				
-			} catch (FileNotFoundException e) {
-				getLogger().error("The module " + moduleName + "'s deployable couldn't be found, however the building will be continued.");
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+			// Get its Manifest 
+			Manifest deployableJarManifest = deployableJar.getManifest();
+			String moduleSymbolicName = deployableJarManifest.getMainAttributes().getValue("Bundle-SymbolicName").trim();
+			String moduleVersion = deployableJarManifest.getMainAttributes().getValue("Bundle-Version").trim();
+			String moduleType = "bundle"; // TODO: Inspect if there are any other artifact types
+			
+			// Set the Artifact with values gotten from the original Manifest 
+			artifact.setName(moduleSymbolicName);
+			artifact.setVersion(moduleVersion);
+			artifact.setType(moduleType); 
+			
+			return artifact;
+			
+		} catch (FileNotFoundException e) {
+			logger.error("The module located at " + artifactPath + " couldn't be found, however the building will be continued.");
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
-		
-		return artifacts;
-	};
-	
-	
-	/**
-	 * This gets the deployable name of a module/project
-	 * @param modulePath The absolute path of the module/project
-	 * @return
-	 * @throws IOException 
-	 * @throws FileNotFoundException 
-	 */
-	private String getModuleDeployableName(String modulePath) throws FileNotFoundException, IOException{
-		
-		String moduleTargetDirPath = modulePath + File.separator + "target" + File.separator ;  
-
-		// Get the deployable name
-		Properties jarInfo = new Properties();
-		jarInfo.load(new FileInputStream(moduleTargetDirPath + "maven-archiver" + SEP + "pom.properties"));
-		
-		String deployableName = jarInfo.getProperty("artifactId") + "-" + jarInfo.getProperty("version");
-
-		// Get the deployable extension
-		// TODO For now, an assumption of it either being .jar or .war will be made by the caller of this method, later on enhance this by traversing the module's POM file for the packaging type directly
-		
-		
-		return deployableName;
+		return null;
 	}
 	
-	private boolean writePlanFile(){
+	private static boolean writeBarePlanFile(Plan planEntity, String planFileFullName,  String outputDirectory){
 		// Write the plan JAXB to a file
 		try {
 			JAXBContext context = JAXBContext.newInstance("com.hesham.maven.virgo.jaxb.plan");
 			Marshaller marshaller = context.createMarshaller();
 			marshaller.setProperty("jaxb.formatted.output",Boolean.TRUE);
 			marshaller.setProperty("jaxb.schemaLocation","http://www.eclipse.org/virgo/schema/plan http://www.eclipse.org/virgo/schema/plan/eclipse-virgo-plan.xsd");
-			JAXBElement<Plan> planElemWrapper = new ObjectFactory().createPlan(planConfig.getPlanEntity());
+			JAXBElement<Plan> planElemWrapper = new ObjectFactory().createPlan(planEntity);
 			
-			String filePath = planConfig.getBasePath() + planConfig.getOutputDirectoryName() + planConfig.getPlanFileName();
+			String filePath = outputDirectory + SEP + planFileFullName;
 			
 			// By default, this should be the target directory
-			File outputDir = new File(planConfig.getBasePath() + planConfig.getOutputDirectoryName());
+			File outputDir = new File(outputDirectory);
 			if ( ! outputDir.exists())
+			{
+				logger.info("Didn't find a target directory, creating one...");
 				outputDir.mkdir();
+			}
 			
 			FileWriter fileWriter = new FileWriter(new File(filePath));
 			marshaller.marshal(planElemWrapper, fileWriter);
@@ -165,7 +117,49 @@ public class VirgoPlanBuilder {
 			return false;
 		}
 	}
-
+	
+	private static boolean writePlanFile(Plan updatedPlan, File planFile){
+		// Write the plan JAXB to a file
+		try {
+			JAXBContext context = JAXBContext.newInstance("com.hesham.maven.virgo.jaxb.plan");
+			Marshaller marshaller = context.createMarshaller();
+			marshaller.setProperty("jaxb.formatted.output",Boolean.TRUE);
+			marshaller.setProperty("jaxb.schemaLocation","http://www.eclipse.org/virgo/schema/plan http://www.eclipse.org/virgo/schema/plan/eclipse-virgo-plan.xsd");
+			JAXBElement<Plan> planElemWrapper = new ObjectFactory().createPlan(updatedPlan);
+			
+			FileWriter fileWriter = new FileWriter(planFile);
+			marshaller.marshal(planElemWrapper, fileWriter);
+			fileWriter.close();
+			return true;
+		} catch (JAXBException e) {
+			e.printStackTrace();
+			return false;
+		} catch (IOException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+	
+	private static Plan readPlanFile(File planFile){
+		JAXBContext context = null;
+		try {
+			context = JAXBContext.newInstance("com.hesham.maven.virgo.jaxb.plan");
+		} catch (JAXBException e) {
+			e.printStackTrace();
+		}
+		Unmarshaller unmarshaller = null;
+		try {
+			unmarshaller = context.createUnmarshaller();
+		} catch (JAXBException e) {
+			e.printStackTrace();
+		}
+		try {
+			return ((JAXBElement<Plan>)unmarshaller.unmarshal(planFile)).getValue();
+		} catch (JAXBException e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
 	public Log getLogger() {
 		return logger;
 	}
