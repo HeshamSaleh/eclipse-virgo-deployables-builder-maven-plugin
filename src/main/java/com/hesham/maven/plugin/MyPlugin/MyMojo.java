@@ -123,6 +123,14 @@ public class MyMojo extends AbstractMojo {
 		{
 			// Then this artifact is actually a submodule, and an entry for it should be added to the main plan file located at the parent/target directory
 			String artifactFullName = artifactFinalName + "." + packaging;
+
+			// Check if the current plugin execution is following previous one on the parent, or that the POM for this module is independently being built
+			if (barePlanFile == null){
+				// Which means it is not executed through the parent
+				// Do nothing, you should exit
+				getLog().info("Found that this module is not being built through its parent project, thus skipping the virgo-plan plugin.");
+				return;
+			}
 			VirgoPlanBuilder.appendToPlan(artifactFullName, outputDirectory.getAbsolutePath(), barePlanFile);
 		}
 	}
